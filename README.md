@@ -16,7 +16,7 @@ pip install -r requirements.txt
 python longest_stationary.py --video entrance.mov
 ```
 
-By default, analysis is limited to the blue ROI shown in `assets/roi_tracking_result.png`:
+By default, analysis is limited to the blue ROI shown in `assets/blue_roi_result.png`:
 
 ```text
 x1=916, y1=0, x2=1915, y2=1080
@@ -73,13 +73,13 @@ The annotated overlays use green for stationary, orange for grace or unstable
 tracks, and red for moving tracks. Labels use the format
 `P<stable_person_id>/T<raw_tracker_id>`.
 
-| Longest-stay frame strip | ROI-limited tracking result |
-| --- | --- |
-| <img src="assets/longest_stay_strip.png" alt="Sampled frames across the longest stationary interval" width="420"> | <img src="assets/roi_tracking_result.png" alt="Blue ROI with annotated longest stationary person" width="420"> |
-
-| ROI benchmark |
+| Longest-stay frame strip, blue ROI |
 | --- |
-| <img src="assets/benchmark_roi.png" alt="ROI benchmark comparing full-frame and blue ROI tracking metrics" width="420"> |
+| <img src="assets/longest_stay_strip.png" alt="Sampled frames across the longest stationary interval in the blue ROI run" width="1000"> |
+
+| Blue ROI result | ROI benchmark |
+| --- | --- |
+| <img src="assets/blue_roi_result.png" alt="Blue ROI annotated result frame with longest stationary person" width="500"> | <img src="assets/benchmark_roi.png" alt="ROI benchmark comparing full-frame and blue ROI tracking metrics" width="500"> |
 
 The ROI benchmark keeps the same longest stationary duration (`42.2s`) while
 reducing analyzed raw tracking IDs from `102` to `68` and stable person IDs
