@@ -142,6 +142,38 @@ def parse_args() -> argparse.Namespace:
         help="Skip longest-stay frame strip generation.",
     )
     parser.add_argument(
+        "--duration-chart-output",
+        default="top_stationary_durations.png",
+        help="PNG filename for the top stationary durations bar chart.",
+    )
+    parser.add_argument(
+        "--duration-chart-count",
+        type=int,
+        default=10,
+        help="Number of people to show in the top stationary durations bar chart.",
+    )
+    parser.add_argument(
+        "--no-duration-chart",
+        action="store_true",
+        help="Skip top stationary durations chart generation.",
+    )
+    parser.add_argument(
+        "--identity-map-output",
+        default="identity_map.png",
+        help="PNG filename for the stable-person to raw-tracker ID mapping chart.",
+    )
+    parser.add_argument(
+        "--identity-map-count",
+        type=int,
+        default=8,
+        help="Number of merged stable identities to show in the identity mapping chart.",
+    )
+    parser.add_argument(
+        "--no-identity-map",
+        action="store_true",
+        help="Skip stable-person to raw-tracker ID mapping chart generation.",
+    )
+    parser.add_argument(
         "--no-video-output",
         action="store_true",
         help="Skip annotated video generation. Useful for hyperparameter sweeps.",
@@ -850,6 +882,212 @@ def write_longest_stay_frame_strip(
     return output_path
 
 
+def best_duration_seconds(state: TrackState, fps: float) -> float:
+    if state.best_segment is None:
+        return 0.0
+    return seconds(state.best_segment.duration_frames, fps)
+
+
+def write_top_stationary_durations_chart(
+    output_path: Path,
+    person_states: dict[int, TrackState],
+    *,
+    fps: float,
+    limit: int,
+    roi: Rect | None,
+) -> Path | None:
+    rows = [
+        (
+            state.person_id,
+            best_duration_seconds(state, fps),
+            "|".join(str(value) for value in sorted(state.raw_track_ids)),
+        )
+        for state in person_states.values()
+    ]
+    rows = [row for row in rows if row[1] > 0.0]
+    rows.sort(key=lambda row: (-row[1], row[0]))
+    rows = rows[: max(1, limit)]
+    if not rows:
+        return None
+
+    width = 1280
+    height = 720
+    margin_x = 56
+    title_y = 56
+    chart_top = 124
+    chart_bottom = 662
+    label_width = 220
+    value_width = 120
+    bar_x = margin_x + label_width
+    bar_max_width = width - bar_x - value_width - margin_x
+    row_gap = max(44, min(68, (chart_bottom - chart_top) // len(rows)))
+    bar_height = min(34, max(18, row_gap - 18))
+    max_duration = max(row[1] for row in rows)
+
+    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+    draw_plain_text(canvas, "Top stationary durations", (margin_x, title_y), scale=1.05, thickness=2)
+    if roi is None:
+        subtitle = "Full-frame analysis"
+    else:
+        subtitle = f"Blue ROI analysis: x1={roi[0]}, y1={roi[1]}, x2={roi[2]}, y2={roi[3]}"
+    draw_plain_text(canvas, subtitle, (margin_x, 88), scale=0.58, color=(80, 80, 80))
+
+    for index, (person_id, duration_sec, raw_track_ids) in enumerate(rows):
+        y = chart_top + index * row_gap
+        bar_width = int(round(bar_max_width * duration_sec / max_duration))
+        is_winner = index == 0
+        bar_color = (255, 180, 40) if is_winner and roi is not None else (44, 160, 44)
+        if not is_winner:
+            bar_color = (165, 165, 165)
+
+        label = f"P{person_id}"
+        if raw_track_ids:
+            label += f" / T{raw_track_ids}"
+        draw_plain_text(canvas, label, (margin_x, y + 26), scale=0.58, thickness=2)
+
+        cv2.rectangle(
+            canvas,
+            (bar_x, y),
+            (bar_x + bar_max_width, y + bar_height),
+            (232, 232, 232),
+            1,
+        )
+        cv2.rectangle(canvas, (bar_x, y), (bar_x + bar_width, y + bar_height), bar_color, -1)
+        draw_plain_text(
+            canvas,
+            format_seconds(duration_sec),
+            (bar_x + bar_max_width + 20, y + 25),
+            scale=0.58,
+            thickness=2 if is_winner else 1,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(output_path), canvas):
+        raise RuntimeError(f"Could not write top stationary durations chart: {output_path}")
+    return output_path
+
+
+def write_identity_mapping_chart(
+    output_path: Path,
+    person_states: dict[int, TrackState],
+    reid_events: list[ReIdEvent],
+    *,
+    fps: float,
+    limit: int,
+    roi: Rect | None,
+    highlight_person_id: int | None,
+) -> Path | None:
+    rows = [state for state in person_states.values() if len(state.raw_track_ids) > 1]
+    if not rows:
+        return None
+
+    rows.sort(
+        key=lambda state: (
+            0 if highlight_person_id is not None and state.person_id == highlight_person_id else 1,
+            -best_duration_seconds(state, fps),
+            state.person_id,
+        )
+    )
+    rows = rows[: max(1, limit)]
+    relinked_raw_ids = {event.raw_track_id for event in reid_events if event.event == "relinked"}
+
+    width = 1280
+    row_gap = 78
+    margin_x = 56
+    header_height = 126
+    footer_height = 72
+    height = max(420, header_height + row_gap * len(rows) + footer_height)
+    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+
+    draw_plain_text(canvas, "Stable identity map", (margin_x, 56), scale=1.05, thickness=2)
+    if roi is None:
+        subtitle = "Full-frame analysis"
+    else:
+        subtitle = f"Blue ROI analysis: x1={roi[0]}, y1={roi[1]}, x2={roi[2]}, y2={roi[3]}"
+    draw_plain_text(canvas, subtitle, (margin_x, 88), scale=0.58, color=(80, 80, 80))
+
+    p_box_w = 94
+    p_box_h = 42
+    raw_box_w = 92
+    raw_box_h = 42
+    raw_gap = 36
+    p_x = margin_x
+    raw_start_x = 230
+    duration_x = 1040
+    y_start = header_height
+
+    for row_index, state in enumerate(rows):
+        y = y_start + row_index * row_gap
+        is_highlight = highlight_person_id is not None and state.person_id == highlight_person_id
+        p_color = (44, 160, 44)
+
+        cv2.rectangle(canvas, (p_x, y), (p_x + p_box_w, y + p_box_h), p_color, -1)
+        draw_plain_text(
+            canvas,
+            f"P{state.person_id}",
+            (p_x + 16, y + 28),
+            scale=0.7,
+            color=(255, 255, 255),
+            thickness=2,
+        )
+
+        raw_ids = sorted(state.raw_track_ids)
+        first_raw_x = raw_start_x
+        cv2.arrowedLine(
+            canvas,
+            (p_x + p_box_w + 12, y + p_box_h // 2),
+            (first_raw_x - 14, y + p_box_h // 2),
+            (130, 130, 130),
+            2,
+            tipLength=0.18,
+        )
+
+        for raw_index, raw_id in enumerate(raw_ids):
+            x = raw_start_x + raw_index * (raw_box_w + raw_gap)
+            raw_color = (255, 180, 40) if raw_id in relinked_raw_ids else (165, 165, 165)
+            cv2.rectangle(canvas, (x, y), (x + raw_box_w, y + raw_box_h), raw_color, -1)
+            draw_plain_text(
+                canvas,
+                f"T{raw_id}",
+                (x + 18, y + 28),
+                scale=0.7,
+                color=(255, 255, 255),
+                thickness=2,
+            )
+            if raw_index < len(raw_ids) - 1:
+                cv2.arrowedLine(
+                    canvas,
+                    (x + raw_box_w + 6, y + raw_box_h // 2),
+                    (x + raw_box_w + raw_gap - 8, y + raw_box_h // 2),
+                    (130, 130, 130),
+                    2,
+                    tipLength=0.25,
+                )
+
+        duration = best_duration_seconds(state, fps)
+        draw_plain_text(
+            canvas,
+            f"best stationary: {format_seconds(duration)}",
+            (duration_x, y + 28),
+            scale=0.55,
+            color=(45, 45, 45),
+            thickness=2 if is_highlight else 1,
+        )
+
+    legend_y = height - 36
+    cv2.rectangle(canvas, (margin_x, legend_y - 22), (margin_x + 28, legend_y + 2), (44, 160, 44), -1)
+    draw_plain_text(canvas, "stable P identity", (margin_x + 40, legend_y), scale=0.48)
+    cv2.rectangle(canvas, (margin_x + 230, legend_y - 22), (margin_x + 258, legend_y + 2), (165, 165, 165), -1)
+    draw_plain_text(canvas, "new raw T track", (margin_x + 270, legend_y), scale=0.48)
+    cv2.rectangle(canvas, (margin_x + 440, legend_y - 22), (margin_x + 468, legend_y + 2), (255, 180, 40), -1)
+    draw_plain_text(canvas, "relinked raw T track", (margin_x + 480, legend_y), scale=0.48)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(output_path), canvas):
+        raise RuntimeError(f"Could not write identity mapping chart: {output_path}")
+    return output_path
+
+
 def write_updates_csv(path: Path, updates: list[BestUpdate]) -> None:
     with path.open("w", newline="") as file:
         writer = csv.DictWriter(
@@ -959,6 +1197,8 @@ def write_summary_json(
     detected_raw_track_count: int,
     ignored_outside_roi_raw_track_count: int,
     frame_strip_path: Path | None,
+    duration_chart_path: Path | None,
+    identity_map_path: Path | None,
 ) -> None:
     if best_update is None:
         result = None
@@ -990,6 +1230,10 @@ def write_summary_json(
         "result": result,
         "visualizations": {
             "longest_stay_frame_strip": None if frame_strip_path is None else str(frame_strip_path),
+            "top_stationary_durations_chart": (
+                None if duration_chart_path is None else str(duration_chart_path)
+            ),
+            "identity_mapping_chart": None if identity_map_path is None else str(identity_map_path),
         },
         "identity_relinking": {
             "enabled": not args.disable_reid,
@@ -1055,6 +1299,8 @@ def run() -> None:
     output_dir = Path(args.output_dir)
     output_video_path = output_dir / args.output_video
     frame_strip_path = output_dir / args.frame_strip_output
+    duration_chart_path = output_dir / args.duration_chart_output
+    identity_map_path = output_dir / args.identity_map_output
     summary_path = output_dir / "summary.json"
     updates_path = output_dir / "longest_updates.csv"
     reid_events_path = output_dir / "reid_events.csv"
@@ -1269,6 +1515,28 @@ def run() -> None:
             sample_count=args.frame_strip_count,
         )
 
+    written_duration_chart_path: Path | None = None
+    if not args.no_duration_chart:
+        written_duration_chart_path = write_top_stationary_durations_chart(
+            duration_chart_path,
+            person_states,
+            fps=fps,
+            limit=args.duration_chart_count,
+            roi=roi,
+        )
+
+    written_identity_map_path: Path | None = None
+    if not args.no_identity_map:
+        written_identity_map_path = write_identity_mapping_chart(
+            identity_map_path,
+            person_states,
+            reid_events,
+            fps=fps,
+            limit=args.identity_map_count,
+            roi=roi,
+            highlight_person_id=None if best_update is None else best_update.person_id,
+        )
+
     write_updates_csv(updates_path, updates)
     write_reid_events_csv(reid_events_path, reid_events)
     write_identity_tracks_csv(identity_tracks_path, person_states, fps)
@@ -1286,6 +1554,8 @@ def run() -> None:
         detected_raw_track_count=len(all_raw_track_ids_seen),
         ignored_outside_roi_raw_track_count=len(all_raw_track_ids_seen - raw_track_ids_seen),
         frame_strip_path=written_frame_strip_path,
+        duration_chart_path=written_duration_chart_path,
+        identity_map_path=written_identity_map_path,
     )
 
     print()
@@ -1316,6 +1586,18 @@ def run() -> None:
         print("Longest-stay frame strip: skipped")
     else:
         print("Longest-stay frame strip: not generated")
+    if written_duration_chart_path is not None:
+        print(f"Top stationary durations chart: {written_duration_chart_path}")
+    elif args.no_duration_chart:
+        print("Top stationary durations chart: skipped")
+    else:
+        print("Top stationary durations chart: not generated")
+    if written_identity_map_path is not None:
+        print(f"Stable identity map: {written_identity_map_path}")
+    elif args.no_identity_map:
+        print("Stable identity map: skipped")
+    else:
+        print("Stable identity map: not generated")
     print(f"Summary JSON: {summary_path}")
     print(f"Best-update log: {updates_path}")
     print(f"ReID event log: {reid_events_path}")

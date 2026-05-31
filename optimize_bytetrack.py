@@ -140,6 +140,8 @@ def command_for_experiment(
     if not args.keep_videos:
         command.append("--no-video-output")
         command.append("--no-frame-strip")
+        command.append("--no-duration-chart")
+        command.append("--no-identity-map")
     else:
         command.extend(["--output-video", f"{experiment.name}.mp4"])
     if args.roi is not None:

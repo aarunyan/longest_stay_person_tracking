@@ -76,6 +76,8 @@ def command_for_case(case: BenchmarkCase, output_dir: Path, args: argparse.Names
     else:
         command.append("--no-video-output")
         command.append("--no-frame-strip")
+        command.append("--no-duration-chart")
+        command.append("--no-identity-map")
     return command
 
 

@@ -38,6 +38,8 @@ The script writes:
 - `outputs/reid_events.csv`: log of created and relinked identities
 - `outputs/identity_tracks.csv`: stable person IDs and the raw tracker IDs merged into each one
 - `outputs/longest_stay_strip.png`: sampled frame strip from the longest stationary interval
+- `outputs/top_stationary_durations.png`: bar chart of the top stationary durations
+- `outputs/identity_map.png`: chart showing which raw tracker IDs were merged into each stable person ID
 
 To run with the optimized ByteTrack config from the sweep:
 
@@ -67,15 +69,49 @@ python longest_stationary.py --video entrance.mov --frame-strip-count 7
 python longest_stationary.py --video entrance.mov --no-frame-strip
 ```
 
+To customize or skip the top stationary durations chart:
+
+```bash
+python longest_stationary.py --video entrance.mov --duration-chart-count 10
+python longest_stationary.py --video entrance.mov --no-duration-chart
+```
+
+To customize or skip the stable identity map:
+
+```bash
+python longest_stationary.py --video entrance.mov --identity-map-count 8
+python longest_stationary.py --video entrance.mov --no-identity-map
+```
+
 ## Result Images
 
 The annotated overlays use green for stationary, orange for grace or unstable
 tracks, and red for moving tracks. Labels use the format
 `P<stable_person_id>/T<raw_tracker_id>`.
 
+`T<raw_tracker_id>` is the raw ID assigned by ByteTrack to one continuous track
+segment. It can change when a person is briefly lost, occluded, or re-detected.
+`P<stable_person_id>` is the stable ID assigned by this project after custom
+ReID. A single stable `P` can contain one or more raw `T` IDs.
+
+When a new raw `T` appears, the script either creates a new stable `P` or links
+that `T` back to a recently lost `P`. The relinking check compares bottom-center
+position continuity, lower-body HSV color similarity, bbox-height ratio, and
+time gap. For example, in the blue ROI run, `P9` contains `T13` and `T19`.
+When the overlay later shows `P9/T19`, the current ByteTrack ID is `T19`, but
+the stable person identity and stationary-duration score continue under `P9`.
+
+| Stable identity map, blue ROI |
+| --- |
+| <img src="assets/identity_map.png" alt="Stable person IDs mapped to raw tracker IDs in the blue ROI run" width="900"> |
+
 | Longest-stay frame strip, blue ROI |
 | --- |
 | <img src="assets/longest_stay_strip.png" alt="Sampled frames across the longest stationary interval in the blue ROI run" width="1000"> |
+
+| Top stationary durations, blue ROI |
+| --- |
+| <img src="assets/top_stationary_durations.png" alt="Top stationary durations bar chart for the blue ROI run" width="900"> |
 
 | Blue ROI result | ROI benchmark |
 | --- | --- |
