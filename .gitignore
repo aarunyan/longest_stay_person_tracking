@@ -1,0 +1,74 @@
+# macOS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Local virtual environments and package caches
+.venv/
+venv/
+env/
+ENV/
+.cache/
+pip-wheel-metadata/
+*.egg-info/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Generated analysis artifacts and experiment outputs
+outputs/
+outputs_*/
+experiments/
+runs/
+wandb/
+mlruns/
+
+# Large or privacy-sensitive source media and exports
+ROI.png
+*.mov
+*.mp4
+*.avi
+*.mkv
+*.webm
+*.m4v
+*.mpeg
+*.mpg
+
+# Downloaded model weights and exported model binaries
+models/
+weights/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.pb

@@ -1,0 +1,27 @@
+
+
+
+CODING TEST [C — Longest Stay Detection]
+Objective: assess Python, Computer Vision, AI solution design, problem solving, and code quality.
+Dataset: VDO Dataset (Refer to entrance.mov)
+Rules: use any tools (Python/OpenCV/YOLO/Ultralytics/LLM). Pick ONE: A) 
+Develop a system to identify: The person who remained stationary for the longest duration and The duration of the stationary period.
+Desired output:
+
+
+
+* 
+* Duration of the stationary period
+* Method used to measure the stationary duration
+Submit: 
+
+* source code
+* README
+* requirements.txt
+* VDO result
+* short idea description
+Evaluation: idea, code quality, solution design, reasoning, creativity. 
+
+Note: AI tools are allowed, but you must be able to explain your approach and its limitations yourself in the next interview round.
+Deadline: by 20:00 on 31 May 2026 (Thailand time). If you cannot submit in time, this round is forfeited.
+Interview: 1-2 June 2026.
