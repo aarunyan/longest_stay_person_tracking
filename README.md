@@ -153,13 +153,24 @@ The sweep writes:
 
 - `experiments/bytetrack_optimization/experiment_results.csv`: one row per tracker setting
 - `experiments/bytetrack_optimization/best_experiment.json`: selected setting by proxy objective
-- `experiments/bytetrack_optimization/bytetrack_sweep.png`: visual comparison of tracking fragmentation and longest-stay duration
+- `experiments/bytetrack_optimization/bytetrack_sweep.png`: visual comparison of confidence settings, tracking fragmentation, and longest-stay duration
 
 The logged columns include the number of stable person IDs, the number of raw tracking IDs, the longest-stay person ID, and that person's stationary duration.
 
 | ByteTrack config sweep |
 | --- |
 | <img src="assets/bytetrack_sweep.png" alt="ByteTrack config sweep comparing confidence thresholds, track buffer, raw tracking IDs, stable person IDs, and longest duration" width="1000"> |
+
+In the sweep image, the small line under each config shows:
+
+```text
+conf <detector confidence> | <track_high_thresh>/<track_low_thresh>/<new_track_thresh>
+```
+
+For example, `conf 0.10 | 0.15/0.03/0.40` means YOLO detections are passed to
+tracking at confidence `0.10`, ByteTrack treats detections above `0.15` as
+strong matches, can use detections down to `0.03` for recovery, and requires
+`0.40` confidence before starting a new raw track.
 
 The selected run uses detector `--conf 0.10` and
 `tracker_configs/bytetrack_long_occlusion.yaml`:
