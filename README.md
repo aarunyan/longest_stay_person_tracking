@@ -11,6 +11,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Download the input video from this Google Drive folder before running the
+Python scripts:
+
+[Download video files](https://drive.google.com/drive/folders/1vSRXbuQjI8kiFCnCwpLQ8etnix-bV71A?usp=sharing)
+
+Place the video in the project root as `entrance.mov`, or pass its location with
+`--video /path/to/video.mov`.
+
 ## 2. Run and Main Parameters
 
 Run the default blue-ROI analysis:
