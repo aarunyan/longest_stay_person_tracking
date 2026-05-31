@@ -139,6 +139,7 @@ def command_for_experiment(
         command.extend(["--max-frames", str(args.max_frames)])
     if not args.keep_videos:
         command.append("--no-video-output")
+        command.append("--no-frame-strip")
     else:
         command.extend(["--output-video", f"{experiment.name}.mp4"])
     if args.roi is not None:

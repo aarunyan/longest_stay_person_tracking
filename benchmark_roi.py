@@ -75,6 +75,7 @@ def command_for_case(case: BenchmarkCase, output_dir: Path, args: argparse.Names
         command.extend(["--output-video", f"{case.name}.mp4"])
     else:
         command.append("--no-video-output")
+        command.append("--no-frame-strip")
     return command
 
 

@@ -16,7 +16,7 @@ pip install -r requirements.txt
 python longest_stationary.py --video entrance.mov
 ```
 
-By default, analysis is limited to the blue ROI shown in `ROI.png`:
+By default, analysis is limited to the blue ROI shown in `assets/roi_tracking_result.png`:
 
 ```text
 x1=916, y1=0, x2=1915, y2=1080
@@ -37,6 +37,7 @@ The script writes:
 - `outputs/longest_updates.csv`: log whenever a person creates a new longest stationary duration
 - `outputs/reid_events.csv`: log of created and relinked identities
 - `outputs/identity_tracks.csv`: stable person IDs and the raw tracker IDs merged into each one
+- `outputs/longest_stay_strip.png`: sampled frame strip from the longest stationary interval
 
 To run with the optimized ByteTrack config from the sweep:
 
@@ -59,15 +60,26 @@ The benchmark writes `experiments/roi_benchmark/benchmark_results.csv`,
 `experiments/roi_benchmark/benchmark_summary.json`, and
 `experiments/roi_benchmark/benchmark_roi.png`.
 
+To customize or skip the longest-stay frame strip:
+
+```bash
+python longest_stationary.py --video entrance.mov --frame-strip-count 7
+python longest_stationary.py --video entrance.mov --no-frame-strip
+```
+
 ## Result Images
 
 The annotated overlays use green for stationary, orange for grace or unstable
 tracks, and red for moving tracks. Labels use the format
 `P<stable_person_id>/T<raw_tracker_id>`.
 
-| ROI-limited tracking result | ROI benchmark |
+| Longest-stay frame strip | ROI-limited tracking result |
 | --- | --- |
-| <img src="ROI.png" alt="Blue ROI with annotated longest stationary person" width="420"> | <img src="experiments/roi_benchmark/benchmark_roi.png" alt="ROI benchmark comparing full-frame and blue ROI tracking metrics" width="420"> |
+| <img src="assets/longest_stay_strip.png" alt="Sampled frames across the longest stationary interval" width="420"> | <img src="assets/roi_tracking_result.png" alt="Blue ROI with annotated longest stationary person" width="420"> |
+
+| ROI benchmark |
+| --- |
+| <img src="assets/benchmark_roi.png" alt="ROI benchmark comparing full-frame and blue ROI tracking metrics" width="420"> |
 
 The ROI benchmark keeps the same longest stationary duration (`42.2s`) while
 reducing analyzed raw tracking IDs from `102` to `68` and stable person IDs
@@ -75,10 +87,11 @@ from `97` to `62`.
 
 | ReID check frame 548 | ReID check frame 565 | ReID check frame 566 |
 | --- | --- | --- |
-| <img src="outputs/reid_check_frames/frame_548.jpg" alt="Annotated ReID check frame 548" width="280"> | <img src="outputs/reid_check_frames/frame_565.jpg" alt="Annotated ReID check frame 565" width="280"> | <img src="outputs/reid_check_frames/frame_566.jpg" alt="Annotated ReID check frame 566" width="280"> |
+| <img src="assets/reid_frame_548.jpg" alt="Annotated ReID check frame 548" width="280"> | <img src="assets/reid_frame_565.jpg" alt="Annotated ReID check frame 565" width="280"> | <img src="assets/reid_frame_566.jpg" alt="Annotated ReID check frame 566" width="280"> |
 
-These result images are generated artifacts. If an image path is missing, run
-the corresponding command above to regenerate the output folder.
+The checked-in images under `assets/` are copies of generated artifacts. To
+refresh them, rerun the corresponding command above and copy the regenerated
+image into `assets/`.
 
 ## ByteTrack Sweep
 

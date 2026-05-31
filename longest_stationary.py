@@ -126,6 +126,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="outputs", help="Directory for output files.")
     parser.add_argument("--output-video", default="annotated_entrance.mp4", help="Annotated result video filename.")
     parser.add_argument(
+        "--frame-strip-output",
+        default="longest_stay_strip.png",
+        help="PNG filename for sampled frames across the longest stationary interval.",
+    )
+    parser.add_argument(
+        "--frame-strip-count",
+        type=int,
+        default=5,
+        help="Number of frames to sample in the longest-stay frame strip.",
+    )
+    parser.add_argument(
+        "--no-frame-strip",
+        action="store_true",
+        help="Skip longest-stay frame strip generation.",
+    )
+    parser.add_argument(
         "--no-video-output",
         action="store_true",
         help="Skip annotated video generation. Useful for hyperparameter sweeps.",
@@ -704,6 +720,136 @@ def create_writer(output_path: Path, fps: float, size: tuple[int, int]) -> cv2.V
     return writer
 
 
+def draw_plain_text(
+    canvas: np.ndarray,
+    text: str,
+    origin: tuple[int, int],
+    *,
+    scale: float = 0.65,
+    color: tuple[int, int, int] = (35, 35, 35),
+    thickness: int = 1,
+) -> None:
+    cv2.putText(
+        canvas,
+        text,
+        origin,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        color,
+        thickness,
+        cv2.LINE_AA,
+    )
+
+
+def find_written_video_path(output_video_path: Path) -> Path | None:
+    if output_video_path.exists():
+        return output_video_path
+
+    fallback = output_video_path.with_suffix(".avi")
+    if fallback.exists():
+        return fallback
+
+    return None
+
+
+def frame_strip_label(index: int, total: int) -> str:
+    if total <= 1:
+        return "sample"
+    if index == 0:
+        return "start"
+    if index == total - 1:
+        return "end"
+    if total == 3 and index == 1:
+        return "middle"
+    percent = round(100 * index / (total - 1))
+    return f"{percent}%"
+
+
+def write_longest_stay_frame_strip(
+    source_video_path: Path,
+    output_path: Path,
+    best_update: BestUpdate,
+    *,
+    fps: float,
+    frame_count: int,
+    sample_count: int,
+) -> Path:
+    sample_count = max(1, sample_count)
+    cap = cv2.VideoCapture(str(source_video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video for frame strip: {source_video_path}")
+
+    source_fps = float(cap.get(cv2.CAP_PROP_FPS) or fps or 30.0)
+    source_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or frame_count or 0)
+    max_frame_index = max(0, source_frame_count - 1) if source_frame_count else None
+
+    sample_times = np.linspace(best_update.start_sec, best_update.end_sec, sample_count)
+    frames: list[tuple[np.ndarray, int, float, str]] = []
+
+    try:
+        for index, time_sec in enumerate(sample_times):
+            frame_idx = int(round(float(time_sec) * source_fps))
+            if max_frame_index is not None:
+                frame_idx = max(0, min(max_frame_index, frame_idx))
+            else:
+                frame_idx = max(0, frame_idx)
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            frames.append((frame, frame_idx, float(time_sec), frame_strip_label(index, sample_count)))
+    finally:
+        cap.release()
+
+    if not frames:
+        raise RuntimeError(f"Could not read any sampled frames from {source_video_path}")
+
+    tile_width = 360
+    first_height, first_width = frames[0][0].shape[:2]
+    tile_height = max(1, int(round(tile_width * first_height / first_width)))
+    header_height = 78
+    caption_height = 44
+    margin = 24
+    gap = 12
+
+    canvas_width = margin * 2 + tile_width * len(frames) + gap * (len(frames) - 1)
+    canvas_height = header_height + tile_height + caption_height + margin
+    canvas = np.full((canvas_height, canvas_width, 3), 255, dtype=np.uint8)
+
+    title = (
+        f"Longest-stay frame strip: P{best_update.person_id} "
+        f"{format_seconds(best_update.duration_sec)}"
+    )
+    subtitle = (
+        f"Sampled from {best_update.start_sec:.1f}s to {best_update.end_sec:.1f}s "
+        f"({source_video_path.name})"
+    )
+    draw_plain_text(canvas, title, (margin, 36), scale=0.9, thickness=2)
+    draw_plain_text(canvas, subtitle, (margin, 64), scale=0.55, color=(80, 80, 80))
+
+    for index, (frame, frame_idx, time_sec, label) in enumerate(frames):
+        x = margin + index * (tile_width + gap)
+        y = header_height
+        resized = cv2.resize(frame, (tile_width, tile_height), interpolation=cv2.INTER_AREA)
+        canvas[y : y + tile_height, x : x + tile_width] = resized
+        cv2.rectangle(canvas, (x, y), (x + tile_width, y + tile_height), (210, 210, 210), 1)
+        caption = f"{label}: {time_sec:.1f}s | frame {frame_idx}"
+        draw_plain_text(
+            canvas,
+            caption,
+            (x, y + tile_height + 28),
+            scale=0.48,
+            color=(55, 55, 55),
+            thickness=1,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(output_path), canvas):
+        raise RuntimeError(f"Could not write longest-stay frame strip: {output_path}")
+    return output_path
+
+
 def write_updates_csv(path: Path, updates: list[BestUpdate]) -> None:
     with path.open("w", newline="") as file:
         writer = csv.DictWriter(
@@ -812,6 +958,7 @@ def write_summary_json(
     roi: Rect | None,
     detected_raw_track_count: int,
     ignored_outside_roi_raw_track_count: int,
+    frame_strip_path: Path | None,
 ) -> None:
     if best_update is None:
         result = None
@@ -841,6 +988,9 @@ def write_summary_json(
         "fps": float(fps),
         "frame_count": int(frame_count),
         "result": result,
+        "visualizations": {
+            "longest_stay_frame_strip": None if frame_strip_path is None else str(frame_strip_path),
+        },
         "identity_relinking": {
             "enabled": not args.disable_reid,
             "raw_tracker_id_count": int(raw_track_count),
@@ -904,6 +1054,7 @@ def run() -> None:
     video_path = Path(args.video)
     output_dir = Path(args.output_dir)
     output_video_path = output_dir / args.output_video
+    frame_strip_path = output_dir / args.frame_strip_output
     summary_path = output_dir / "summary.json"
     updates_path = output_dir / "longest_updates.csv"
     reid_events_path = output_dir / "reid_events.csv"
@@ -1103,6 +1254,21 @@ def run() -> None:
                     updates.append(best_update)
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    written_video_path = find_written_video_path(output_video_path) if writer is not None else None
+    written_frame_strip_path: Path | None = None
+    if not args.no_frame_strip and best_update is not None:
+        source_video_path = written_video_path
+        if source_video_path is None:
+            source_video_path = video_path
+        written_frame_strip_path = write_longest_stay_frame_strip(
+            source_video_path,
+            frame_strip_path,
+            best_update,
+            fps=fps,
+            frame_count=frame_count,
+            sample_count=args.frame_strip_count,
+        )
+
     write_updates_csv(updates_path, updates)
     write_reid_events_csv(reid_events_path, reid_events)
     write_identity_tracks_csv(identity_tracks_path, person_states, fps)
@@ -1119,6 +1285,7 @@ def run() -> None:
         roi=roi,
         detected_raw_track_count=len(all_raw_track_ids_seen),
         ignored_outside_roi_raw_track_count=len(all_raw_track_ids_seen - raw_track_ids_seen),
+        frame_strip_path=written_frame_strip_path,
     )
 
     print()
@@ -1140,9 +1307,15 @@ def run() -> None:
     print(f"Stable person IDs: {len(person_states)}")
     print(f"Relinked raw tracks: {sum(1 for event in reid_events if event.event == 'relinked')}")
     if writer is not None:
-        print(f"Annotated video: {output_video_path}")
+        print(f"Annotated video: {written_video_path or output_video_path}")
     else:
         print("Annotated video: skipped")
+    if written_frame_strip_path is not None:
+        print(f"Longest-stay frame strip: {written_frame_strip_path}")
+    elif args.no_frame_strip:
+        print("Longest-stay frame strip: skipped")
+    else:
+        print("Longest-stay frame strip: not generated")
     print(f"Summary JSON: {summary_path}")
     print(f"Best-update log: {updates_path}")
     print(f"ReID event log: {reid_events_path}")
