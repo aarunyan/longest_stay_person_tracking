@@ -48,6 +48,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Reuse case summary.json files when they already exist.",
     )
+    parser.add_argument(
+        "--comparison-frame",
+        type=int,
+        default=2103,
+        help="Frame index used for the full-frame vs blue-ROI comparison PNG.",
+    )
+    parser.add_argument(
+        "--no-comparison-frame",
+        action="store_true",
+        help="Skip the full-frame vs blue-ROI comparison PNG.",
+    )
     return parser.parse_args()
 
 
@@ -214,6 +225,120 @@ def draw_benchmark_chart(rows: list[dict[str, object]], path: Path) -> None:
         raise RuntimeError(f"Could not write benchmark chart: {path}")
 
 
+def read_video_frame(video_path: Path, frame_idx: int) -> np.ndarray | None:
+    if not video_path.exists():
+        return None
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+
+    try:
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if frame_count:
+            frame_idx = max(0, min(frame_count - 1, frame_idx))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ok, frame = cap.read()
+        if not ok:
+            return None
+        return frame
+    finally:
+        cap.release()
+
+
+def draw_metric_card(
+    canvas: np.ndarray,
+    origin: tuple[int, int],
+    title: str,
+    row: dict[str, object],
+    color: tuple[int, int, int],
+) -> None:
+    x, y = origin
+    card_width = 560
+    card_height = 116
+    cv2.rectangle(canvas, (x, y), (x + card_width, y + card_height), (248, 248, 248), -1)
+    cv2.rectangle(canvas, (x, y), (x + card_width, y + card_height), (225, 225, 225), 1)
+    cv2.rectangle(canvas, (x, y), (x + 10, y + card_height), color, -1)
+    draw_text(canvas, title, (x + 24, y + 34), scale=0.72, thickness=2)
+    draw_text(
+        canvas,
+        f"Analyzed raw tracking IDs: {row['tracking_id_count']}",
+        (x + 24, y + 66),
+        scale=0.52,
+    )
+    draw_text(
+        canvas,
+        f"Stable person IDs: {row['person_id_count']}",
+        (x + 300, y + 66),
+        scale=0.52,
+    )
+    draw_text(
+        canvas,
+        f"Longest stationary: P{row['longest_person_id']} / {row['longest_duration_human']}",
+        (x + 24, y + 96),
+        scale=0.52,
+        thickness=2,
+    )
+
+
+def draw_roi_comparison_frame(
+    rows: list[dict[str, object]],
+    output_root: Path,
+    path: Path,
+    *,
+    frame_idx: int,
+) -> Path | None:
+    row_by_case = {str(row["case"]): row for row in rows}
+    full_row = row_by_case.get("full_frame")
+    roi_row = row_by_case.get("blue_roi")
+    if full_row is None or roi_row is None:
+        return None
+
+    full_frame = read_video_frame(output_root / "full_frame" / "full_frame.mp4", frame_idx)
+    blue_roi_frame = read_video_frame(output_root / "blue_roi" / "blue_roi.mp4", frame_idx)
+    if full_frame is None or blue_roi_frame is None:
+        return None
+
+    tile_width = 600
+    tile_height = 338
+    full_tile = cv2.resize(full_frame, (tile_width, tile_height), interpolation=cv2.INTER_AREA)
+    roi_tile = cv2.resize(blue_roi_frame, (tile_width, tile_height), interpolation=cv2.INTER_AREA)
+
+    margin = 40
+    gap = 24
+    header_height = 100
+    card_height = 136
+    canvas_width = margin * 2 + tile_width * 2 + gap
+    canvas_height = header_height + tile_height + card_height + margin
+    canvas = np.full((canvas_height, canvas_width, 3), 255, dtype=np.uint8)
+
+    draw_text(canvas, "Full-frame vs Blue ROI", (margin, 52), scale=1.05, thickness=2)
+    draw_text(
+        canvas,
+        "Blue ROI keeps the same longest-stay answer while reducing tracker noise outside the entrance area.",
+        (margin, 84),
+        scale=0.55,
+        color=(80, 80, 80),
+    )
+
+    y = header_height
+    full_x = margin
+    roi_x = margin + tile_width + gap
+    canvas[y : y + tile_height, full_x : full_x + tile_width] = full_tile
+    canvas[y : y + tile_height, roi_x : roi_x + tile_width] = roi_tile
+    cv2.rectangle(canvas, (full_x, y), (full_x + tile_width, y + tile_height), (210, 210, 210), 1)
+    cv2.rectangle(canvas, (roi_x, y), (roi_x + tile_width, y + tile_height), (210, 210, 210), 1)
+
+    card_y = y + tile_height + 20
+    draw_metric_card(canvas, (full_x, card_y), "Full frame", full_row, (80, 90, 220))
+    draw_metric_card(canvas, (roi_x, card_y), "Blue ROI", roi_row, (255, 180, 40))
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), canvas):
+        raise RuntimeError(f"Could not write ROI comparison frame: {path}")
+    return path
+
+
 def main() -> None:
     args = parse_args()
     output_root = Path(args.output_dir)
@@ -258,15 +383,30 @@ def main() -> None:
     results_path = output_root / "benchmark_results.csv"
     summary_path = output_root / "benchmark_summary.json"
     chart_path = output_root / "benchmark_roi.png"
+    comparison_path = output_root / "benchmark_roi_comparison.png"
 
     write_csv(results_path, rows)
     summary_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
     draw_benchmark_chart(rows, chart_path)
+    comparison_result = None
+    if not args.no_comparison_frame:
+        comparison_result = draw_roi_comparison_frame(
+            rows,
+            output_root,
+            comparison_path,
+            frame_idx=args.comparison_frame,
+        )
 
     print()
     print(f"Wrote benchmark results: {results_path}")
     print(f"Wrote benchmark summary: {summary_path}")
     print(f"Wrote benchmark chart: {chart_path}")
+    if comparison_result is not None:
+        print(f"Wrote ROI comparison frame: {comparison_result}")
+    elif args.no_comparison_frame:
+        print("ROI comparison frame: skipped")
+    else:
+        print("ROI comparison frame: skipped because benchmark videos are missing")
 
 
 if __name__ == "__main__":

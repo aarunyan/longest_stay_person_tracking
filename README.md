@@ -30,6 +30,13 @@ scoring. To disable the ROI:
 python longest_stationary.py --video entrance.mov --roi none
 ```
 
+The blue ROI is necessary because the full frame contains people outside the
+entrance area who are not relevant to the longest-stay question. Those extra
+detections increase tracker noise and identity fragmentation. In the benchmark,
+the blue ROI keeps the same longest stationary duration (`42.2s`) while reducing
+analyzed raw tracker IDs from `102` to `68` and stable person IDs from `97` to
+`62`.
+
 The script writes:
 
 - `outputs/annotated_entrance.mp4`: video with stable person IDs, raw tracker IDs, and stationary status
@@ -59,8 +66,9 @@ python benchmark_roi.py --video entrance.mov --keep-videos
 ```
 
 The benchmark writes `experiments/roi_benchmark/benchmark_results.csv`,
-`experiments/roi_benchmark/benchmark_summary.json`, and
-`experiments/roi_benchmark/benchmark_roi.png`.
+`experiments/roi_benchmark/benchmark_summary.json`,
+`experiments/roi_benchmark/benchmark_roi.png`, and
+`experiments/roi_benchmark/benchmark_roi_comparison.png`.
 
 To customize or skip the longest-stay frame strip:
 
@@ -113,13 +121,17 @@ the stable person identity and stationary-duration score continue under `P9`.
 | --- |
 | <img src="assets/top_stationary_durations.png" alt="Top stationary durations bar chart for the blue ROI run" width="900"> |
 
+| Full-frame vs Blue ROI |
+| --- |
+| <img src="assets/roi_comparison.png" alt="Side-by-side comparison of full-frame tracking and blue ROI tracking" width="1000"> |
+
 | Blue ROI result | ROI benchmark |
 | --- | --- |
 | <img src="assets/blue_roi_result.png" alt="Blue ROI annotated result frame with longest stationary person" width="500"> | <img src="assets/benchmark_roi.png" alt="ROI benchmark comparing full-frame and blue ROI tracking metrics" width="500"> |
 
-The ROI benchmark keeps the same longest stationary duration (`42.2s`) while
-reducing analyzed raw tracking IDs from `102` to `68` and stable person IDs
-from `97` to `62`.
+The side-by-side frame shows why the ROI matters visually: full-frame tracking
+keeps unrelated people on the left side of the image in the analysis, while the
+blue ROI focuses scoring on the entrance area.
 
 | ReID check frame 548 | ReID check frame 565 | ReID check frame 566 |
 | --- | --- | --- |
