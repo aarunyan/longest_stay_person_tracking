@@ -18,12 +18,15 @@ DEFAULT_ROI = "916,0,1915,1080"
 
 @dataclass(frozen=True)
 class BenchmarkCase:
+    # One benchmark branch: full-frame baseline or the blue monitored ROI.
     name: str
     label: str
     roi: str
 
 
 CASES = [
+    # Full frame shows tracking noise from the whole scene; blue ROI keeps only
+    # the entrance area used for the final result.
     BenchmarkCase(name="full_frame", label="Full frame", roi="none"),
     BenchmarkCase(name="blue_roi", label="Blue ROI", roi=DEFAULT_ROI),
 ]
@@ -64,6 +67,8 @@ def parse_args() -> argparse.Namespace:
 
 def command_for_case(case: BenchmarkCase, output_dir: Path, args: argparse.Namespace) -> list[str]:
     roi = args.roi if case.name == "blue_roi" else case.roi
+    # Reuse longest_stationary.py for both branches so the only intended
+    # difference is the ROI gate.
     command = [
         sys.executable,
         "longest_stationary.py",
@@ -85,6 +90,8 @@ def command_for_case(case: BenchmarkCase, output_dir: Path, args: argparse.Names
     if args.keep_videos:
         command.extend(["--output-video", f"{case.name}.mp4"])
     else:
+        # The benchmark chart only needs summary metrics; videos are optional
+        # because they are slower and much larger.
         command.append("--no-video-output")
         command.append("--no-frame-strip")
         command.append("--no-duration-chart")
@@ -98,6 +105,7 @@ def read_summary(path: Path) -> dict:
 
 
 def row_from_summary(case: BenchmarkCase, output_dir: Path, summary: dict) -> dict[str, object]:
+    # Normalize the nested summary into comparable ROI-vs-full-frame metrics.
     identity = summary.get("identity_relinking", {})
     result = summary.get("result") or {}
     raw_track_ids = result.get("raw_track_ids") or []
@@ -163,6 +171,8 @@ def draw_text(
 
 
 def draw_benchmark_chart(rows: list[dict[str, object]], path: Path) -> None:
+    # Metrics have different scales, so each row is normalized independently
+    # while the numeric labels keep the exact values visible.
     metrics = [
         ("tracking_id_count", "Analyzed raw tracking IDs"),
         ("person_id_count", "Stable person IDs"),
@@ -236,6 +246,8 @@ def read_video_frame(video_path: Path, frame_idx: int) -> np.ndarray | None:
     try:
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         if frame_count:
+            # Clamp the requested frame so the comparison still works on short
+            # debug clips produced with --max-frames.
             frame_idx = max(0, min(frame_count - 1, frame_idx))
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ok, frame = cap.read()
@@ -288,6 +300,8 @@ def draw_roi_comparison_frame(
     *,
     frame_idx: int,
 ) -> Path | None:
+    # This side-by-side figure is available only when --keep-videos created the
+    # annotated videos for both benchmark branches.
     row_by_case = {str(row["case"]): row for row in rows}
     full_row = row_by_case.get("full_frame")
     roi_row = row_by_case.get("blue_roi")
@@ -346,6 +360,8 @@ def main() -> None:
 
     cases = [
         CASES[0],
+        # Allow callers to override the default blue ROI without changing the
+        # full-frame baseline branch.
         BenchmarkCase(name="blue_roi", label="Blue ROI", roi=args.roi),
     ]
 
@@ -361,6 +377,8 @@ def main() -> None:
         summary_path = case_dir / "summary.json"
 
         if args.reuse_existing and summary_path.exists():
+            # Reuse lets README/asset generation refresh charts without
+            # rerunning the detector when summaries already exist.
             print(f"[{index}/{len(cases)}] Reusing {case.label}: {summary_path}", flush=True)
         else:
             command = command_for_case(case, case_dir, args)

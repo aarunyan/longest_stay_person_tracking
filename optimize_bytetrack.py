@@ -15,6 +15,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Experiment:
+    # One sweep row: detector confidence plus ByteTrack association parameters.
     name: str
     tracker: str
     conf: float
@@ -27,6 +28,8 @@ class Experiment:
 
 
 EXPERIMENTS = [
+    # Fixed candidates keep the experiment reproducible and make the README
+    # comparison stable across reruns.
     Experiment(
         name="default_conf030",
         tracker="tracker_configs/bytetrack_default.yaml",
@@ -129,6 +132,8 @@ def command_for_experiment(
     output_dir: Path,
     args: argparse.Namespace,
 ) -> list[str]:
+    # Each sweep row is delegated to longest_stationary.py so the scoring logic
+    # is identical between standalone runs and optimization runs.
     command = [
         sys.executable,
         "longest_stationary.py",
@@ -146,6 +151,8 @@ def command_for_experiment(
     if args.max_frames:
         command.extend(["--max-frames", str(args.max_frames)])
     if not args.keep_videos:
+        # Sweeps usually need metrics only; skipping videos/images keeps the run
+        # faster and avoids large experiment folders.
         command.append("--no-video-output")
         command.append("--no-frame-strip")
         command.append("--no-duration-chart")
@@ -163,6 +170,7 @@ def read_summary(path: Path) -> dict:
 
 
 def row_from_summary(experiment: Experiment, output_dir: Path, summary: dict) -> dict[str, object]:
+    # Flatten longest_stationary.py summary.json into one CSV-friendly row.
     identity = summary.get("identity_relinking", {})
     result = summary.get("result") or {}
     raw_track_ids = result.get("raw_track_ids") or []
@@ -271,6 +279,8 @@ def draw_bytetrack_sweep_chart(
     max_duration = max(float(row["longest_duration_sec"]) for row in sorted_rows) or 1.0
     best_name = None if best is None else str(best.get("experiment"))
 
+    # The chart intentionally puts fragmentation metrics next to the longest
+    # duration so a lower-ID setting does not hide a changed answer.
     width = 1280
     height = 760
     canvas = np.full((height, width, 3), 255, dtype=np.uint8)
@@ -377,6 +387,8 @@ def main() -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         command = command_for_experiment(experiment, output_dir, args)
 
+        # Run experiments sequentially to isolate tracker state and keep logs
+        # aligned with each output directory.
         print(f"[{index}/{len(experiments)}] Running {experiment.name}")
         print(" ".join(command))
         completed = subprocess.run(command, check=False, env=env)
@@ -396,6 +408,8 @@ def main() -> None:
     results_path = experiments_dir / "experiment_results.csv"
     write_csv(results_path, rows)
 
+    # Persist both the full table and the selected proxy-best row for README
+    # figures and later reproducibility checks.
     best = choose_best(rows)
     best_path = experiments_dir / "best_experiment.json"
     best_path.write_text(json.dumps(best, indent=2), encoding="utf-8")

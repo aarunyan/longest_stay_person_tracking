@@ -13,6 +13,8 @@ from typing import Deque, Iterable
 import cv2
 import numpy as np
 
+# Keep Ultralytics/Matplotlib cache files inside the project so runs are
+# reproducible in sandboxes and do not write to user-global config folders.
 os.environ.setdefault("YOLO_CONFIG_DIR", ".cache/ultralytics")
 os.environ.setdefault("MPLCONFIGDIR", ".cache/matplotlib")
 os.environ.setdefault("XDG_CACHE_HOME", ".cache")
@@ -38,6 +40,8 @@ class Segment:
 
 @dataclass
 class TrackState:
+    # Stable person-level state. A single P identity can collect multiple raw
+    # ByteTrack T IDs when custom ReID reconnects fragmented tracks.
     person_id: int
     raw_track_ids: set[int] = field(default_factory=set)
     last_raw_track_id: int | None = None
@@ -57,6 +61,7 @@ class TrackState:
 
 @dataclass
 class BestUpdate:
+    # Snapshot emitted whenever the current longest stationary segment improves.
     frame: int
     time_sec: float
     person_id: int
@@ -79,6 +84,7 @@ class IdentityMatch:
 
 @dataclass
 class ReIdEvent:
+    # Audit record for every new raw T ID, either created as a new P or relinked.
     event: str
     frame: int
     time_sec: float
@@ -293,6 +299,8 @@ def distance(a: Point, b: Point) -> float:
 
 
 def bottom_center(xyxy: Iterable[float]) -> tuple[Point, float]:
+    # The bottom-center point approximates the person's ground contact point,
+    # which is more stable for ROI gating than the bbox center.
     x1, y1, x2, y2 = [float(v) for v in xyxy]
     return ((x1 + x2) / 2.0, y2), max(1.0, y2 - y1)
 
@@ -369,6 +377,7 @@ def update_appearance_hist(state: TrackState, new_hist: np.ndarray | None, alpha
     if state.appearance_hist is None:
         state.appearance_hist = new_hist
         return
+    # EMA keeps identity appearance stable while still adapting to lighting and pose changes.
     updated = (1.0 - alpha) * state.appearance_hist + alpha * new_hist
     total = float(updated.sum())
     if total > 0:
@@ -426,10 +435,13 @@ def find_identity_match(
     if args.disable_reid:
         return None
 
+    # Custom ReID maps a new raw ByteTrack track ID (T) back to a recently
+    # lost stable person ID (P) when motion, appearance, size, and time agree.
     max_gap_frames = max(1, int(round(args.reid_max_gap_seconds * fps)))
     best: IdentityMatch | None = None
 
     for person_id, state in person_states.items():
+        # A stable person can be assigned only once in the current frame.
         if person_id in assigned_person_ids:
             continue
         if state.smooth_point is None or state.last_seen_frame < 0:
@@ -441,6 +453,8 @@ def find_identity_match(
 
         gap_seconds = gap_frames / fps if fps > 0 else 0.0
         scale = max(float(state.bbox_height), float(bbox_height), 1.0)
+        # The allowed position jump grows with person scale and elapsed time,
+        # which tolerates short occlusions without merging distant people.
         position_limit = (
             max(args.reid_min_position_px, args.reid_position_ratio * scale)
             + args.reid_motion_px_per_sec * gap_seconds
@@ -456,6 +470,8 @@ def find_identity_match(
 
         size_score = bbox_size_similarity(state.bbox_height, bbox_height)
         time_score = max(0.0, min(1.0, 1.0 - gap_frames / max_gap_frames))
+        # Position and trouser color carry most of the score; bbox size and
+        # recency help break ties between plausible candidates.
         score = (
             0.45 * position_score
             + 0.35 * color_score
@@ -496,9 +512,11 @@ def resolve_person_id(
     args: argparse.Namespace,
     next_person_id: int,
 ) -> tuple[int, int, ReIdEvent | None]:
+    # Existing raw tracker IDs keep their stable person assignment.
     if raw_track_id in raw_to_person:
         return raw_to_person[raw_track_id], next_person_id, None
 
+    # A new raw T either relinks to an old stable P or creates a new P.
     match = find_identity_match(
         person_states,
         assigned_person_ids,
@@ -592,12 +610,16 @@ def update_track_state(
     min_threshold_px: float,
     grace_frames: int,
 ) -> Segment | None:
+    # Preserve the raw T IDs that contributed to this stable P identity for
+    # later reporting and identity-map visualization.
     state.raw_track_ids.add(raw_track_id)
     state.last_raw_track_id = raw_track_id
     if state.first_seen_frame < 0:
         state.first_seen_frame = frame_idx
     update_appearance_hist(state, appearance_hist, appearance_alpha)
 
+    # Smooth bottom-center motion before measuring stationarity; the raw
+    # detector boxes can jitter even when the person is standing still.
     state.smooth_point = smooth_position(state.smooth_point, raw_point, alpha)
     state.positions.append(state.smooth_point)
     state.bbox_height = bbox_height
@@ -608,10 +630,13 @@ def update_track_state(
         state.positions.popleft()
 
     threshold = stationary_threshold(bbox_height, threshold_ratio, min_threshold_px)
+    # Wait until the rolling window is full before making a stationary/moving decision.
     if len(state.positions) < window_frames:
         state.last_status = "observing"
         return None
 
+    # A person is stationary when all smoothed points in the recent window stay
+    # within a bbox-scaled movement radius.
     is_stationary = window_radius(state.positions) <= threshold
 
     if is_stationary:
@@ -629,6 +654,8 @@ def update_track_state(
         return current
 
     if state.in_stationary:
+        # Short movement spikes are treated as grace frames so detector jitter
+        # does not break a long stationary stay.
         state.unstable_frames += 1
         state.last_status = "unstable"
         if state.unstable_frames > grace_frames:
@@ -815,6 +842,8 @@ def write_longest_stay_frame_strip(
     source_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or frame_count or 0)
     max_frame_index = max(0, source_frame_count - 1) if source_frame_count else None
 
+    # Sample evenly from the winning interval so the README can show start,
+    # middle, and end evidence instead of only a single frame.
     sample_times = np.linspace(best_update.start_sec, best_update.end_sec, sample_count)
     frames: list[tuple[np.ndarray, int, float, str]] = []
 
@@ -896,6 +925,7 @@ def write_top_stationary_durations_chart(
     limit: int,
     roi: Rect | None,
 ) -> Path | None:
+    # Convert each stable identity's best segment into ranked chart rows.
     rows = [
         (
             state.person_id,
@@ -977,6 +1007,7 @@ def write_identity_mapping_chart(
     roi: Rect | None,
     highlight_person_id: int | None,
 ) -> Path | None:
+    # Show only identities where ReID actually merged multiple raw T tracks.
     rows = [state for state in person_states.values() if len(state.raw_track_ids) > 1]
     if not rows:
         return None
@@ -1200,6 +1231,8 @@ def write_summary_json(
     duration_chart_path: Path | None,
     identity_map_path: Path | None,
 ) -> None:
+    # Summary JSON is the machine-readable contract used by the benchmark and
+    # ByteTrack sweep scripts, so keep raw/stable ID metrics explicit.
     if best_update is None:
         result = None
     else:
@@ -1327,6 +1360,8 @@ def run() -> None:
 
     person_states: dict[int, TrackState] = {}
     raw_to_person: dict[int, int] = {}
+    # all_raw_track_ids_seen counts every detector track; raw_track_ids_seen
+    # counts only tracks accepted by the ROI gate.
     all_raw_track_ids_seen: set[int] = set()
     raw_track_ids_seen: set[int] = set()
     reid_events: list[ReIdEvent] = []
@@ -1376,6 +1411,8 @@ def run() -> None:
                     raw_track_id = int(raw_track_id)
                     all_raw_track_ids_seen.add(raw_track_id)
                     raw_point, bbox_height = bottom_center(xyxy)
+                    # The blue ROI gate keeps only people whose bottom-center
+                    # point is inside the monitored entrance area.
                     if not point_in_roi(raw_point, roi):
                         continue
 
@@ -1404,6 +1441,8 @@ def run() -> None:
                     seen_person_ids.add(person_id)
 
                     if state.last_seen_frame >= 0 and frame_idx - state.last_seen_frame > args.max_lost_frames:
+                        # If a stable P disappears too long, close its active
+                        # stationary segment before accepting a new observation.
                         closed_segment = finalize_stationary_segment(state, state.last_seen_frame)
                         state.positions.clear()
                         state.smooth_point = None
@@ -1453,6 +1492,8 @@ def run() -> None:
                 if state.person_id in seen_person_ids:
                     continue
                 if state.in_stationary and frame_idx - state.last_seen_frame > args.max_lost_frames:
+                    # Also close stationary segments for people not seen in the
+                    # current frame, so the final duration ends at last evidence.
                     segment = finalize_stationary_segment(state, state.last_seen_frame)
                     if segment is not None:
                         duration_sec = seconds(segment.duration_frames, fps)
@@ -1503,6 +1544,8 @@ def run() -> None:
     written_video_path = find_written_video_path(output_video_path) if writer is not None else None
     written_frame_strip_path: Path | None = None
     if not args.no_frame_strip and best_update is not None:
+        # Prefer annotated video for the strip when it exists; otherwise sample
+        # from the source video so non-video runs still produce README evidence.
         source_video_path = written_video_path
         if source_video_path is None:
             source_video_path = video_path

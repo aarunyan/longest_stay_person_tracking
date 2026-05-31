@@ -148,10 +148,6 @@ score are still `P9`.
 | --- |
 | <img src="assets/identity_map.png" alt="Stable person IDs mapped to raw tracker IDs in the blue ROI run" width="900"> |
 
-| ReID check frame 548 | ReID check frame 565 | ReID check frame 566 |
-| --- | --- | --- |
-| <img src="assets/reid_frame_548.jpg" alt="Annotated ReID check frame 548" width="280"> | <img src="assets/reid_frame_565.jpg" alt="Annotated ReID check frame 565" width="280"> | <img src="assets/reid_frame_566.jpg" alt="Annotated ReID check frame 566" width="280"> |
-
 ### 4.2. Experimental Tracking of ByteTrack Hyperparameters and Detection Confidence
 
 Run the tracker-parameter sweep:
