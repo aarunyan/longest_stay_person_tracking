@@ -277,14 +277,14 @@ def draw_bytetrack_sweep_chart(
     draw_text(canvas, "ByteTrack config sweep", (40, 54), scale=1.05, thickness=2)
     draw_text(
         canvas,
-        "Lower ID counts mean less fragmentation; longest-stay duration should remain stable.",
+        "Lower ID counts mean less fragmentation; confidence gates shown as detector conf | high/low/new.",
         (40, 88),
         scale=0.56,
         color=(80, 80, 80),
     )
 
     y_start = 162
-    row_gap = 88
+    row_gap = 92
     label_x = 40
     buffer_x = 300
     raw_x = 430
@@ -302,13 +302,20 @@ def draw_bytetrack_sweep_chart(
         y = y_start + index * row_gap
         is_best = str(row["experiment"]) == best_name
         if is_best:
-            cv2.rectangle(canvas, (28, y - 36), (1248, y + 42), (245, 250, 255), -1)
-            cv2.rectangle(canvas, (28, y - 36), (1248, y + 42), (210, 230, 245), 1)
+            cv2.rectangle(canvas, (28, y - 42), (1248, y + 44), (245, 250, 255), -1)
+            cv2.rectangle(canvas, (28, y - 42), (1248, y + 44), (210, 230, 245), 1)
 
         name = compact_experiment_name(row["experiment"])
         draw_text(canvas, name, (label_x, y), scale=0.52, thickness=2 if is_best else 1)
+        confidence_label = (
+            f"conf {float(row['conf']):.2f} | "
+            f"{float(row['track_high_thresh']):.2f}/"
+            f"{float(row['track_low_thresh']):.2f}/"
+            f"{float(row['new_track_thresh']):.2f}"
+        )
+        draw_text(canvas, confidence_label, (label_x, y + 25), scale=0.38, color=(80, 80, 80))
         if is_best:
-            draw_text(canvas, "selected", (label_x, y + 25), scale=0.42, color=(35, 120, 35), thickness=2)
+            draw_text(canvas, "selected", (label_x, y + 45), scale=0.4, color=(35, 120, 35), thickness=2)
 
         buffer_value = int(row["track_buffer"])
         cv2.rectangle(canvas, (buffer_x, y - 22), (buffer_x + 82, y + 12), (235, 235, 235), -1)

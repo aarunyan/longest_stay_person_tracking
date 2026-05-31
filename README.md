@@ -159,9 +159,10 @@ The logged columns include the number of stable person IDs, the number of raw tr
 
 | ByteTrack config sweep |
 | --- |
-| <img src="assets/bytetrack_sweep.png" alt="ByteTrack config sweep comparing track buffer, raw tracking IDs, stable person IDs, and longest duration" width="1000"> |
+| <img src="assets/bytetrack_sweep.png" alt="ByteTrack config sweep comparing confidence thresholds, track buffer, raw tracking IDs, stable person IDs, and longest duration" width="1000"> |
 
-The selected config is `tracker_configs/bytetrack_long_occlusion.yaml`:
+The selected run uses detector `--conf 0.10` and
+`tracker_configs/bytetrack_long_occlusion.yaml`:
 
 ```yaml
 track_high_thresh: 0.15
@@ -177,6 +178,16 @@ sweep, `long_occlusion_buffer120` kept the longest stationary duration at
 `42.2s` while reducing raw tracker IDs to `102` and stable person IDs to `97`.
 The shorter default buffer configs produced `183-192` raw tracker IDs and
 `150-156` stable person IDs.
+
+The sweep varies two groups of tracking hyperparameters:
+
+| Hyperparameter group | What it controls | Practical effect |
+| --- | --- | --- |
+| Detector `--conf` | Minimum YOLO confidence before detections are passed into tracking | Lower values keep weak person detections during motion blur or occlusion, but can add false positives. |
+| `track_high_thresh` | Confidence level for strong detections used in the first ByteTrack association pass | Lower values make the tracker more willing to continue tracks with less confident detections. |
+| `track_low_thresh` | Minimum confidence for low-score detections used in ByteTrack's recovery pass | Lower values help recover people after occlusion, but increase background/noise candidates. |
+| `new_track_thresh` | Confidence required to start a new track | Higher values prevent weak detections from becoming new raw `T` IDs. |
+| `track_buffer` | How long a lost track is kept before deletion | Larger values help reconnect people after short disappearance. |
 
 `track_buffer` is the number of frames ByteTrack keeps a lost track alive before
 deleting it. The video is about `29.88 FPS`, so:
@@ -198,6 +209,15 @@ The tradeoff is that an overly long buffer can incorrectly reconnect two
 different people in a crowd. This is why the selected long-occlusion config also
 uses a stricter `match_thresh: 0.90` and why the blue ROI is important: it
 reduces irrelevant candidates before ReID and stationary scoring.
+
+Confidence score thresholds are necessary because this scene has both occlusion
+and crowded motion. A high detector confidence such as `--conf 0.30` misses more
+weak person detections, causing ByteTrack to terminate and restart tracks more
+often. A lower detector confidence such as `--conf 0.10`, combined with
+`track_low_thresh: 0.03`, gives ByteTrack low-score detections to bridge
+occlusions. To prevent that from creating too many new false tracks, the
+selected config keeps `new_track_thresh: 0.40`, so weak detections can help
+continue existing tracks but cannot easily start new tracks.
 
 ## Method
 
@@ -222,6 +242,8 @@ The bounding-box-height normalization helps account for perspective: people clos
 ## Main Parameters
 
 - `--window-seconds`: recent time window used to decide stationary status
+- `--conf`: detector confidence threshold before detections are passed to ByteTrack
+- `--tracker`: ByteTrack YAML config path
 - `--smooth-alpha`: position smoothing factor
 - `--stationary-ratio`: movement threshold relative to bbox height
 - `--min-stationary-px`: minimum movement threshold in pixels
