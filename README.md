@@ -153,8 +153,51 @@ The sweep writes:
 
 - `experiments/bytetrack_optimization/experiment_results.csv`: one row per tracker setting
 - `experiments/bytetrack_optimization/best_experiment.json`: selected setting by proxy objective
+- `experiments/bytetrack_optimization/bytetrack_sweep.png`: visual comparison of tracking fragmentation and longest-stay duration
 
 The logged columns include the number of stable person IDs, the number of raw tracking IDs, the longest-stay person ID, and that person's stationary duration.
+
+| ByteTrack config sweep |
+| --- |
+| <img src="assets/bytetrack_sweep.png" alt="ByteTrack config sweep comparing track buffer, raw tracking IDs, stable person IDs, and longest duration" width="1000"> |
+
+The selected config is `tracker_configs/bytetrack_long_occlusion.yaml`:
+
+```yaml
+track_high_thresh: 0.15
+track_low_thresh: 0.03
+new_track_thresh: 0.40
+track_buffer: 120
+match_thresh: 0.90
+```
+
+This setting was chosen by a proxy objective: keep the longest-stay answer
+within 95% of the best duration, then minimize tracking fragmentation. In the
+sweep, `long_occlusion_buffer120` kept the longest stationary duration at
+`42.2s` while reducing raw tracker IDs to `102` and stable person IDs to `97`.
+The shorter default buffer configs produced `183-192` raw tracker IDs and
+`150-156` stable person IDs.
+
+`track_buffer` is the number of frames ByteTrack keeps a lost track alive before
+deleting it. The video is about `29.88 FPS`, so:
+
+| `track_buffer` | Approx. lost-track memory |
+| --- | --- |
+| `30` | `1.0s` |
+| `60` | `2.0s` |
+| `90` | `3.0s` |
+| `120` | `4.0s` |
+
+This matters in the doorway scene because people often overlap or disappear
+briefly behind other people. A short buffer drops the track quickly, so the same
+person can return as a new raw `T` ID. A longer buffer gives ByteTrack more time
+to reconnect the same person after occlusion, reducing raw ID churn and the
+number of stable `P` identities that the custom ReID layer must manage.
+
+The tradeoff is that an overly long buffer can incorrectly reconnect two
+different people in a crowd. This is why the selected long-occlusion config also
+uses a stricter `match_thresh: 0.90` and why the blue ROI is important: it
+reduces irrelevant candidates before ReID and stationary scoring.
 
 ## Method
 

@@ -9,6 +9,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 
 @dataclass(frozen=True)
 class Experiment:
@@ -112,6 +115,11 @@ def parse_args() -> argparse.Namespace:
             "Use 'none' for full-frame analysis. When omitted, longest_stationary.py "
             "uses its default blue-box ROI."
         ),
+    )
+    parser.add_argument(
+        "--no-chart",
+        action="store_true",
+        help="Skip ByteTrack sweep chart generation.",
     )
     return parser.parse_args()
 
@@ -221,6 +229,122 @@ def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
+def draw_text(
+    canvas: np.ndarray,
+    text: str,
+    origin: tuple[int, int],
+    *,
+    scale: float = 0.55,
+    color: tuple[int, int, int] = (35, 35, 35),
+    thickness: int = 1,
+) -> None:
+    cv2.putText(
+        canvas,
+        text,
+        origin,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        color,
+        thickness,
+        cv2.LINE_AA,
+    )
+
+
+def compact_experiment_name(name: object) -> str:
+    return str(name).replace("_buffer", " b").replace("_conf", " c")
+
+
+def draw_bytetrack_sweep_chart(
+    rows: list[dict[str, object]],
+    best: dict[str, object] | None,
+    path: Path,
+) -> None:
+    if not rows:
+        return
+
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: (int(row["track_buffer"]), float(row["conf"]), str(row["experiment"])),
+    )
+    max_tracking_ids = max(int(row["tracking_id_count"]) for row in sorted_rows) or 1
+    max_person_ids = max(int(row["all_person_id_count"]) for row in sorted_rows) or 1
+    max_duration = max(float(row["longest_duration_sec"]) for row in sorted_rows) or 1.0
+    best_name = None if best is None else str(best.get("experiment"))
+
+    width = 1280
+    height = 760
+    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+    draw_text(canvas, "ByteTrack config sweep", (40, 54), scale=1.05, thickness=2)
+    draw_text(
+        canvas,
+        "Lower ID counts mean less fragmentation; longest-stay duration should remain stable.",
+        (40, 88),
+        scale=0.56,
+        color=(80, 80, 80),
+    )
+
+    y_start = 162
+    row_gap = 88
+    label_x = 40
+    buffer_x = 300
+    raw_x = 430
+    stable_x = 430
+    duration_x = 1015
+    bar_max_width = 460
+    bar_h = 20
+
+    draw_text(canvas, "config", (label_x, 122), scale=0.5, color=(90, 90, 90))
+    draw_text(canvas, "track_buffer", (buffer_x, 122), scale=0.5, color=(90, 90, 90))
+    draw_text(canvas, "raw / stable IDs", (raw_x, 122), scale=0.5, color=(90, 90, 90))
+    draw_text(canvas, "longest", (duration_x, 122), scale=0.5, color=(90, 90, 90))
+
+    for index, row in enumerate(sorted_rows):
+        y = y_start + index * row_gap
+        is_best = str(row["experiment"]) == best_name
+        if is_best:
+            cv2.rectangle(canvas, (28, y - 36), (1248, y + 42), (245, 250, 255), -1)
+            cv2.rectangle(canvas, (28, y - 36), (1248, y + 42), (210, 230, 245), 1)
+
+        name = compact_experiment_name(row["experiment"])
+        draw_text(canvas, name, (label_x, y), scale=0.52, thickness=2 if is_best else 1)
+        if is_best:
+            draw_text(canvas, "selected", (label_x, y + 25), scale=0.42, color=(35, 120, 35), thickness=2)
+
+        buffer_value = int(row["track_buffer"])
+        cv2.rectangle(canvas, (buffer_x, y - 22), (buffer_x + 82, y + 12), (235, 235, 235), -1)
+        cv2.rectangle(canvas, (buffer_x, y - 22), (buffer_x + 82, y + 12), (210, 210, 210), 1)
+        draw_text(canvas, str(buffer_value), (buffer_x + 22, y + 1), scale=0.58, thickness=2)
+
+        tracking_ids = int(row["tracking_id_count"])
+        person_ids = int(row["all_person_id_count"])
+        raw_width = int(round(bar_max_width * tracking_ids / max_tracking_ids))
+        stable_width = int(round(bar_max_width * person_ids / max_person_ids))
+        cv2.rectangle(canvas, (raw_x, y - 28), (raw_x + bar_max_width, y - 8), (232, 232, 232), 1)
+        cv2.rectangle(canvas, (stable_x, y + 2), (stable_x + bar_max_width, y + 22), (232, 232, 232), 1)
+        cv2.rectangle(canvas, (raw_x, y - 28), (raw_x + raw_width, y - 8), (80, 90, 220), -1)
+        cv2.rectangle(canvas, (stable_x, y + 2), (stable_x + stable_width, y + 22), (255, 180, 40), -1)
+        draw_text(canvas, f"raw {tracking_ids}", (raw_x + bar_max_width + 16, y - 11), scale=0.45)
+        draw_text(canvas, f"stable {person_ids}", (stable_x + bar_max_width + 16, y + 19), scale=0.45)
+
+        duration_sec = float(row["longest_duration_sec"])
+        duration_width = int(round(145 * duration_sec / max_duration))
+        cv2.rectangle(canvas, (duration_x, y - 18), (duration_x + 145, y + 8), (232, 232, 232), 1)
+        cv2.rectangle(canvas, (duration_x, y - 18), (duration_x + duration_width, y + 8), (44, 160, 44), -1)
+        draw_text(canvas, str(row["longest_duration_human"]), (duration_x + 160, y + 3), scale=0.45)
+
+    legend_y = 720
+    cv2.rectangle(canvas, (40, legend_y - 16), (68, legend_y + 8), (80, 90, 220), -1)
+    draw_text(canvas, "raw tracker IDs", (80, legend_y + 4), scale=0.48)
+    cv2.rectangle(canvas, (245, legend_y - 16), (273, legend_y + 8), (255, 180, 40), -1)
+    draw_text(canvas, "stable person IDs", (285, legend_y + 4), scale=0.48)
+    cv2.rectangle(canvas, (490, legend_y - 16), (518, legend_y + 8), (44, 160, 44), -1)
+    draw_text(canvas, "longest stationary duration", (530, legend_y + 4), scale=0.48)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(path), canvas):
+        raise RuntimeError(f"Could not write ByteTrack sweep chart: {path}")
+
+
 def main() -> None:
     args = parse_args()
     experiments_dir = Path(args.experiments_dir)
@@ -268,10 +392,15 @@ def main() -> None:
     best = choose_best(rows)
     best_path = experiments_dir / "best_experiment.json"
     best_path.write_text(json.dumps(best, indent=2), encoding="utf-8")
+    chart_path = experiments_dir / "bytetrack_sweep.png"
+    if not args.no_chart:
+        draw_bytetrack_sweep_chart(rows, best, chart_path)
 
     print()
     print(f"Wrote experiment log: {results_path}")
     print(f"Wrote best experiment: {best_path}")
+    if not args.no_chart:
+        print(f"Wrote ByteTrack sweep chart: {chart_path}")
     if best:
         print(
             "Best by proxy objective: "
